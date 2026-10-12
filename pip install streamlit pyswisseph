@@ -1,0 +1,250 @@
+streamlit run app.py
+import streamlit as st
+import datetime
+import swisseph as swe
+
+# Page configuration
+st.set_page_config(
+    page_title="AstroPsych Transit Simulator",
+    page_icon="🌌",
+    layout="wide"
+)
+
+# Set Ephemeris Path
+swe.set_ephe_path('')
+
+# Custom CSS styling
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #0f1117;
+        color: #e0e6ed;
+    }
+    .transit-card {
+        background-color: #1a1d24;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 12px;
+        border-left: 4px solid #7c4dff;
+    }
+    .major-aspect {
+        border-left-color: #ff4081 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Data structures & Astrology Constants
+PLANETS = {
+    "Sonne": swe.SUN,
+    "Mond": swe.MOON,
+    "Merkur": swe.MERCURY,
+    "Venus": swe.VENUS,
+    "Mars": swe.MARS,
+    "Jupiter": swe.JUPITER,
+    "Saturn": swe.SATURN,
+    "Uranus": swe.URANUS,
+    "Neptun": swe.NEPTUN,
+    "Pluto": swe.PLUTO
+}
+
+ZODIAC_SIGNS = [
+    "Widder", "Stier", "Zwillinge", "Krebs", "Löwe", "Jungfrau",
+    "Waage", "Skorpion", "Schütze", "Steinbock", "Wassermann", "Fische"
+]
+
+ASPECTS = {
+    "Konjunktion": {"angle": 0, "orb": 6.0, "symbol": "☌"},
+    "Sextil": {"angle": 60, "orb": 4.0, "symbol": "⚹"},
+    "Quadrat": {"angle": 90, "orb": 5.0, "symbol": "□"},
+    "Trigon": {"angle": 120, "orb": 5.0, "symbol": "△"},
+    "Opposition": {"angle": 180, "orb": 6.0, "symbol": "☍"}
+}
+
+INTERPRETATIONS = {
+    "Saturn": "Phasen der Restrukturierung, Konsolidierung und Verantwortungsübernahme. Reifungsprozesse fordern Klarheit.",
+    "Pluto": "Tiefgreifender psychologischer Wandel, Loslassen alter Machtstrukturen und Transformation im Schattenbereich.",
+    "Uranus": "Plötzliche Durchbrüche, Drang nach Freiheit, Umbrüche und Befreiung von einengenden Bedingungen.",
+    "Neptun": "Auflösung fester Konturen, Inspiration, Verfeinerung des Mitgefühls oder Phase der Unklarheit und Sehnsucht.",
+    "Jupiter": "Sinnerweiterung, neue Perspektiven, Zuversicht und Wachstumsimpulse.",
+    "Mars": "Tatkraft, Durchsetzungsenergie, Konfliktpotenzial oder notwendige Grenzen.",
+    "Venus": "Beziehungsthemen, Neuwertung von Selbstliebe, Bindungswerten und Ästhetik.",
+    "Merkur": "Mentale Neuordnung, vertiefte Kommunikation und Ausrichtung der Gedankenstrukturen."
+}
+
+# Helper calculations
+def get_zodiac_position(degree):
+    sign_idx = int(degree // 30)
+    deg_in_sign = degree % 30
+    return f"{int(deg_in_sign)}° {ZODIAC_SIGNS[sign_idx]}"
+
+def calculate_positions(dt_utc):
+    jd = swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute/60.0)
+    pos = {}
+    for p_name, p_id in PLANETS.items():
+        res, _ = swe.calc_ut(jd, p_id)
+        pos[p_name] = res[0]
+    return pos
+
+def calculate_houses(dt_utc, lat, lon):
+    jd = swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, dt_utc.hour + dt_utc.minute/60.0)
+    cusps, ascmc = swe.houses(jd, lat, lon, b'P')
+    return cusps
+
+def get_house_for_degree(degree, cusps):
+    for i in range(12):
+        c_start = cusps[i]
+        c_end = cusps[(i + 1) % 12]
+        if c_start < c_end:
+            if c_start <= degree < c_end:
+                return i + 1
+        else: # House spans across 0° Aries
+            if degree >= c_start or degree < c_end:
+                return i + 1
+    return 1
+
+# Session State for Profiles
+if 'profiles' not in st.session_state:
+    st.session_state.profiles = {
+        "Mein Profile": {
+            "dt": datetime.datetime(1992, 1, 1, 12, 0),
+            "lat": 48.137,
+            "lon": 11.576
+        }
+    }
+
+# App UI Header
+st.title("🌌 AstroPsych Transit Simulator")
+st.caption("Planetenstände, Häuser-Transite und tiefe psychologische Aspekt-Analysen")
+
+# Sidebar
+st.sidebar.header("⚙️ Konfiguration")
+
+# Profile Selection
+profile_option = st.sidebar.selectbox("Profil auswählen", list(st.session_state.profiles.keys()))
+current_profile = st.session_state.profiles[profile_option]
+
+# Profile creation expander
+with st.sidebar.expander("➕ Neues Profil anlegen"):
+    new_name = st.text_input("Name")
+    new_date = st.date_input("Geburtsdatum", datetime.date(1995, 1, 1))
+    new_time = st.time_input("Geburtszeit", datetime.time(12, 0))
+    new_lat = st.number_input("Breitengrad (Lat)", value=48.137, format="%.3f")
+    new_lon = st.number_input("Längengrad (Lon)", value=11.576, format="%.3f")
+    if st.button("Profil speichern"):
+        dt_combined = datetime.datetime.combine(new_date, new_time)
+        st.session_state.profiles[new_name] = {"dt": dt_combined, "lat": new_lat, "lon": new_lon}
+        st.success(f"Profil '{new_name}' gespeichert!")
+        st.rerun()
+
+# Filter options
+include_moon = st.sidebar.checkbox("Mond-Transite einbeziehen", value=False, help="Inkludiert schnelle Mondaspekte (erzeugt sehr viele Treffer).")
+mode = st.sidebar.radio("Modus", ["Transit-Scan im Zeitfenster", "Synastrie-Transit Vergleicher"])
+
+# Main Area Calculations
+radix_dt = current_profile["dt"]
+radix_pos = calculate_positions(radix_dt)
+radix_cusps = calculate_houses(radix_dt, current_profile["lat"], current_profile["lon"])
+
+if mode == "Transit-Scan im Zeitfenster":
+    st.subheader("📅 Zeitfenster-Scan")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Startdatum", datetime.date.today())
+    with col2:
+        end_date = st.date_input("Enddatum", datetime.date.today() + datetime.timedelta(days=90))
+        
+    if st.button("Transite simulieren", type="primary"):
+        st.divider()
+        found_transits = []
+        
+        # Scan day by day
+        curr_d = start_date
+        while curr_d <= end_date:
+            curr_dt = datetime.datetime.combine(curr_d, datetime.time(12, 0))
+            t_pos = calculate_positions(curr_dt)
+            
+            for t_planet, t_deg in t_pos.items():
+                if not include_moon and t_planet == "Mond":
+                    continue
+                
+                for r_planet, r_deg in radix_pos.items():
+                    if t_planet == r_planet and t_planet in ["Sonne", "Mond", "Merkur", "Venus", "Mars"]:
+                        continue # Skip exact transit-to-same-natal inner planet noise
+                    
+                    diff = abs(t_deg - r_deg) % 360
+                    if diff > 180:
+                        diff = 360 - diff
+                        
+                    for aspect_name, asp_info in ASPECTS.items():
+                        if abs(diff - asp_info["angle"]) <= 1.0: # Tight orb trigger
+                            h_num = get_house_for_degree(t_deg, radix_cusps)
+                            found_transits.append({
+                                "date": curr_d,
+                                "t_planet": t_planet,
+                                "aspect": aspect_name,
+                                "symbol": asp_info["symbol"],
+                                "r_planet": r_planet,
+                                "house": h_num,
+                                "orb": abs(diff - asp_info["angle"])
+                            })
+            curr_d += datetime.timedelta(days=2) # 2-day step for performance
+
+        if not found_transits:
+            st.info("In diesem Zeitfenster wurden keine exakten Major-Transite gefunden.")
+        else:
+            st.success(f"{len(found_transits)} bedeutsame Transit-Konstellationen identifiziert.")
+            
+            # Synthese-Prognose
+            st.markdown("### 🔮 Psychologische Synthese & Zusammenfassung")
+            slow_transits = [t for t in found_transits if t["t_planet"] in ["Saturn", "Uranus", "Neptun", "Pluto"]]
+            if slow_transits:
+                planets_involved = list(set([t["t_planet"] for t in slow_transits]))
+                st.warning(f"**Schwerpunkt-Transformation:** In dieser Phase wirken vor allem **{', '.join(planets_involved)}**. Achte auf grundlegende Wandlungen in den betroffenen Häusern!")
+            else:
+                st.info("Entspannte Dynamik: Es überwiegen schnelle, dynamische Alltags-Impulse.")
+
+            # Export String for Chat
+            copy_text = f"Transit-Auswertung für {profile_option} ({start_date} bis {end_date}):\n"
+            
+            # Display List
+            for tr in found_transits[:30]: # Display top 30
+                copy_text += f"- {tr['date']}: Transit-{tr['t_planet']} {tr['symbol']} Radix-{tr['r_planet']} (Haus {tr['house']})\n"
+                
+                with st.expander(f"📍 **{tr['date'].strftime('%d.%m.%Y')}**: Transit {tr['t_planet']} {tr['symbol']} Radix-{tr['r_planet']} *(in Haus {tr['house']})*"):
+                    st.write(f"**Astro-Psychologische Deutung:**")
+                    interpretation = INTERPRETATIONS.get(tr['t_planet'], "Fokussierte Impulse bringen aktuelle Themen ins Bewusstsein.")
+                    st.write(f"{interpretation} Die Aktivierung betrifft speziell das **{tr['house']}. Haus** (Lebensbereich).")
+
+            # Copy Box
+            st.subheader("📋 Für den AI-Chat kopieren")
+            st.text_area("Kopiere diese Zusammenfassung und sende sie mir direkt im Chat für eine tiefe Deutung:", value=copy_text, height=150)
+
+elif mode == "Synastrie-Transit Vergleicher":
+    st.subheader("👥 Synastrie & Partner-Transite")
+    if len(st.session_state.profiles) < 2:
+        st.info("Bitte lege über die linke Seitenleiste mindestens zwei Profile an, um Synastrie-Transite zu simulieren.")
+    else:
+        partner_name = st.selectbox("Partner-Profil wählen", [p for p in st.session_state.profiles.keys() if p != profile_option])
+        partner_profile = st.session_state.profiles[partner_name]
+        partner_pos = calculate_positions(partner_profile["dt"])
+        
+        st.write(f"Simuliere wie aktuelle Transite die **Synastrie zwischen {profile_option} und {partner_name}** auslösen.")
+        sim_date = st.date_input("Simulationsdatum", datetime.date.today())
+        
+        if st.button("Synastrie-Transite berechnen"):
+            curr_dt = datetime.datetime.combine(sim_date, datetime.time(12, 0))
+            t_pos = calculate_positions(curr_dt)
+            
+            st.markdown("#### Exakte Triggermomente auf euren gemeinsamen Verbindungspunkten:")
+            for t_planet, t_deg in t_pos.items():
+                if t_planet in ["Mond", "Sonne", "Merkur"]: continue
+                for r1_planet, r1_deg in radix_pos.items():
+                    for r2_planet, r2_deg in partner_pos.items():
+                        diff1 = abs(t_deg - r1_deg) % 360
+                        diff2 = abs(t_deg - r2_deg) % 360
+                        if diff1 > 180: diff1 = 360 - diff1
+                        if diff2 > 180: diff2 = 360 - diff2
+                        
+                        if diff1 < 3.0 and diff2 < 3.0:
+                            st.write(f"⚡ **Doppel-Trigger:** Transit-{t_planet} aktiviert gleichzeitig {profile_option}'s {r1_planet} und {partner_name}'s {r2_planet}!")
